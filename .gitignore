@@ -1,0 +1,1 @@
+﻿# Python\n__pycache__/\n*.pyc\n\n# Jupyter\n.ipynb_checkpoints\n\n# Credentials\ncredentials.json\n*.pem\n.env\n\n# OS\n.DS_Store\nThumbs.db\n\n# Virtualenv\nvenv/\n.env/\n\n# Notebook checkpoints and outputs\n*.nbconvert.ipynb
