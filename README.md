@@ -10,7 +10,7 @@ This repository contains Jupyter Notebooks that download torrents and upload the
 **Easy single-cell GUI interface** - just paste and click!
 - One cell to run - everything auto-installs
 - Interactive widgets with progress bars
-- 3-step workflow: Paste magnet → Download → Upload
+- 4-step workflow: Paste magnet → Analyze → Download → Upload
 - Perfect for quick, one-time downloads
 
 ### For Developers: `torrent_notebook_v2.ipynb`
@@ -33,10 +33,12 @@ Earlier version kept for reference
 1. Open `torrent_notebook_v3_gui.ipynb` in Google Colab
 2. Run the single code cell (everything installs automatically)
 3. Paste your magnet link in the text box
-4. Click "Start Download"
-5. Click "Upload to Drive" when complete
+4. Click "Analyze Torrent" and review the file list
+5. Select the files you want (or use Select All/Deselect All)
+6. Click "Start Download" (Analyze must be run first)
+7. Click "Upload to Drive" when complete
 
-That's it! The notebook handles authentication, progress tracking, and everything else.
+That's it! The notebook handles authentication, analysis, selection, progress tracking, and upload.
 
 ## Advanced Usage (v2)
 
