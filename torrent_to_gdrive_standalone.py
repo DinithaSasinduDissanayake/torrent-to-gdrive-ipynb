@@ -32,6 +32,7 @@ def install_packages():
     """Install all required packages efficiently."""
     print('🚀 Installing dependencies (this takes ~30s)...', flush=True)
     
+    lt_installed = False
     try:
         subprocess.check_call(
             ['apt-get', 'install', '-y', 'python3-libtorrent'],
@@ -39,9 +40,17 @@ def install_packages():
             stderr=subprocess.DEVNULL,
             timeout=60
         )
-        print('✅ libtorrent installed via apt', flush=True)
+        sys.path.insert(0, '/usr/lib/python3/dist-packages')
+        try:
+            import libtorrent
+            print('✅ libtorrent installed via apt', flush=True)
+            lt_installed = True
+        except ImportError:
+            print('⚠️ apt installed but not importable, trying pip...', flush=True)
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
         print(f'⚠️ apt-get install failed, trying pip: {e}', flush=True)
+    
+    if not lt_installed:
         try:
             subprocess.check_call(
                 [sys.executable, '-m', 'pip', 'install', '-q', 'libtorrent'],
@@ -73,6 +82,9 @@ def install_packages():
     print('✅ All dependencies installed!')
 
 install_packages()
+
+if '/usr/lib/python3/dist-packages' not in sys.path:
+    sys.path.insert(0, '/usr/lib/python3/dist-packages')
 
 try:
     import ipywidgets as widgets
