@@ -39,23 +39,37 @@ def install_packages():
             stderr=subprocess.DEVNULL,
             timeout=60
         )
+        print('✅ libtorrent installed via apt', flush=True)
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
-        logger.warning(f"apt-get install failed: {e}")
+        print(f'⚠️ apt-get install failed, trying pip: {e}', flush=True)
+        try:
+            subprocess.check_call(
+                [sys.executable, '-m', 'pip', 'install', '-q', 'libtorrent'],
+                timeout=120
+            )
+            print('✅ libtorrent installed via pip', flush=True)
+        except Exception as pip_error:
+            print(f'❌ Failed to install libtorrent: {pip_error}', flush=True)
+            raise
     
     packages = [
         'ipywidgets',
-        'libtorrent',
         'google-api-python-client',
         'google-auth-httplib2',
         'google-auth-oauthlib',
     ]
     
     for pkg in packages:
-        subprocess.check_call(
-            [sys.executable, '-m', 'pip', 'install', '-q', '--no-warn-conflicts', pkg],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
+        try:
+            subprocess.check_call(
+                [sys.executable, '-m', 'pip', 'install', '-q', '--no-warn-conflicts', pkg],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=120
+            )
+        except subprocess.CalledProcessError as e:
+            print(f'⚠️ Failed to install {pkg}: {e}', flush=True)
+            raise
     print('✅ All dependencies installed!')
 
 install_packages()
