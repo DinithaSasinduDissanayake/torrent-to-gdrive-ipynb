@@ -59,6 +59,10 @@ def install_dependencies():
         print('⚠️ libtorrent not importable after apt, trying pip...', flush=True)
         try:
             subprocess.run(
+                [sys.executable, '-m', 'pip', 'uninstall', '-y', 'libtorrent'], 
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30
+            )
+            subprocess.run(
                 [sys.executable, '-m', 'pip', 'install', '-q', 'libtorrent'], 
                 check=True, timeout=120
             )
