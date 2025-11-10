@@ -1,19 +1,4 @@
 #!/usr/bin/env python3
-"""
-Torrent to Google Drive - Optimized for Colab
-Run with: !python torrent_colab_optimized.py
-
-Optimizations:
-- Parallel dependency installation
-- Optimized libtorrent settings for Colab
-- Better memory management
-- Enhanced tracker list
-- Improved widget performance
-- Automatic cleanup
-
-⚠️ Only download content you legally own!
-"""
-
 import sys
 import subprocess
 import os
@@ -24,94 +9,51 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Callable
 from urllib.parse import quote
 
-# ========== Fast Dependency Installation ==========
 def install_dependencies():
-    """Installs all dependencies, handling apt, sys.path, and pip fallbacks."""
     print('🚀 Installing dependencies...', flush=True)
-    
-    # 1. Attempt to install libtorrent via apt, which is preferred in Colab
     try:
-        subprocess.run(
-            ['apt-get', 'install', '-y', 'python3-libtorrent'],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=60
-        )
-        print('✅ libtorrent installed via apt.', flush=True)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        print(f'⚠️ apt install failed, will try pip. Reason: {e}', flush=True)
-
-    # 2. Add potential system paths for apt-installed packages to the front of sys.path
-    apt_paths = [
-        '/usr/lib/python3/dist-packages',
-        '/usr/local/lib/python3/dist-packages',
-        '/usr/lib/python3.12/dist-packages',
-        '/usr/lib/python3.11/dist-packages',
-        '/usr/lib/python3.10/dist-packages'
-    ]
-    for path in apt_paths:
+        subprocess.run(['apt-get', 'update'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        subprocess.run(['apt-get', 'install', '-y', 'python3-libtorrent'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=90)
+        print('✅ libtorrent installed via apt', flush=True)
+    except Exception as e:
+        print(f'⚠️ apt failed: {e}', flush=True)
+    
+    for path in ['/usr/lib/python3/dist-packages', '/usr/lib/python3.10/dist-packages', '/usr/lib/python3.11/dist-packages', '/usr/lib/python3.12/dist-packages']:
         if os.path.exists(path) and path not in sys.path:
             sys.path.insert(0, path)
-
-    # 3. Try importing libtorrent. If it fails, fall back to pip.
+    
     try:
         import libtorrent as lt
-        print('✅ libtorrent is importable.', flush=True)
+        print(f'✅ libtorrent {lt.__version__} ready', flush=True)
     except ImportError:
-        print('⚠️ libtorrent not importable after apt, trying pip...', flush=True)
+        print('⚠️ Trying alternative installation...', flush=True)
         try:
-            subprocess.run(
-                [sys.executable, '-m', 'pip', 'uninstall', '-y', 'libtorrent'], 
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30
-            )
-            subprocess.run(
-                [sys.executable, '-m', 'pip', 'install', '-q', 'libtorrent'], 
-                check=True, timeout=120
-            )
-            print('✅ libtorrent installed via pip.', flush=True)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            print(f'❌ Failed to install libtorrent via pip: {e}', flush=True)
-            raise RuntimeError('FATAL: libtorrent could not be installed.') from e
-
-    # 4. Install other required packages
-    other_packages = ['ipywidgets', 'google-api-python-client', 'google-auth-httplib2', 'google-auth-oauthlib']
+            subprocess.run([sys.executable, '-m', 'pip', 'install', '--force-reinstall', '--no-cache-dir', 'libtorrent'], check=True, timeout=180)
+            print('✅ libtorrent installed via pip', flush=True)
+        except Exception as e:
+            print(f'❌ Installation failed: {e}', flush=True)
+            raise RuntimeError('Cannot install libtorrent') from e
+    
     try:
-        subprocess.run(
-            [sys.executable, '-m', 'pip', 'install', '-q', *other_packages], 
-            check=True, timeout=120
-        )
-        print('✅ Other dependencies installed.', flush=True)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        print(f'❌ Failed to install other dependencies: {e}', flush=True)
-        raise RuntimeError('FATAL: Could not install required Python packages.') from e
+        subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', 'ipywidgets', 'google-api-python-client', 'google-auth-httplib2', 'google-auth-oauthlib'], check=True, timeout=120)
+        print('✅ All dependencies ready', flush=True)
+    except Exception as e:
+        raise RuntimeError('Cannot install packages') from e
 
-    print('✅ All dependencies are set up.', flush=True)
-
-# Run the robust installation function
 install_dependencies()
 
-# Now, perform critical imports. If any fail, the environment is not set up correctly.
 try:
     import ipywidgets as widgets
     import libtorrent as lt
 except ImportError as e:
-    print(f'❌ Critical import failed after installation: {e}', file=sys.stderr)
-    print('💡 Please restart the Colab runtime and try running the script again.', file=sys.stderr)
-    sys.exit(1)
-
-try:
-    import libtorrent as lt
-except ImportError as e:
-    print(f'❌ Failed to import libtorrent after all attempts: {e}')
-    print('💡 Please restart the runtime and try again.')
+    print(f'❌ Import failed: {e}')
+    print('💡 Restart runtime and try again')
     sys.exit(1)
 
 import shutil
 import zipfile
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s', handlers=[logging.StreamHandler(sys.stdout)])
 logger = logging.getLogger(__name__)
 
 MAX_CONCURRENT_THREADS = 2
@@ -119,7 +61,6 @@ METADATA_TIMEOUT_SECONDS = 900
 BANDWIDTH_LIMIT_DOWNLOAD_MBPS = 25
 BANDWIDTH_LIMIT_UPLOAD_MBPS = 5
 
-# ========== Configuration ==========
 IN_COLAB = 'google.colab' in sys.modules
 LOCAL_DIR = '/content/torrents' if IN_COLAB else './torrents'
 
@@ -141,7 +82,6 @@ PUBLIC_TRACKERS = [
     'udp://retracker.lanta-net.ru:2710/announce'
 ]
 
-# Mount Google Drive
 drive_mounted = False
 if IN_COLAB:
     try:
@@ -191,8 +131,6 @@ def get_global_session():
 
 _thread_pool = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_THREADS, thread_name_prefix="torrent_worker")
 
-
-# ========== Optimized Torrent Downloader ==========
 class TorrentDownloader:
     
     def __init__(self, progress_callback: Optional[Callable] = None, 
@@ -235,10 +173,8 @@ class TorrentDownloader:
             self.progress_callback(percent, speed_down, speed_up, peers, eta)
     
     def _add_trackers_to_magnet(self, magnet_link: str, add_trackers: bool) -> str:
-        """Efficiently add trackers to magnet link with URL encoding."""
         if not add_trackers:
             return magnet_link
-        
         trackers_to_add = [t for t in PUBLIC_TRACKERS if t not in magnet_link]
         if trackers_to_add:
             tracker_params = '&tr='.join([''] + [quote(t, safe='/:?=&') for t in trackers_to_add])
@@ -472,7 +408,6 @@ class TorrentDownloader:
         self._stop_event.set()
 
 
-# ========== Drive Uploader ==========
 class DriveUploader:
     
     def __init__(self, progress_callback=None, status_callback=None):
@@ -556,9 +491,7 @@ class DriveUploader:
             return self._handle_error(e, "Upload")
 
 
-# ========== Optimized GUI ==========
 class TorrentGUI:
-    """Lightweight GUI optimized for Colab."""
     
     def __init__(self):
         self.downloader = None
@@ -577,109 +510,41 @@ class TorrentGUI:
         except ImportError:
             print('❌ IPython not available - GUI requires Jupyter/Colab environment')
             raise
-        
-        # Compact title
         self.title = widgets.HTML('<h2 style="color:#1a73e8;margin:0;">📥 Torrent → Drive</h2>')
-        
-        # Step 1
         self.step1 = widgets.HTML('<h3 style="margin:10px 0 5px;">1️⃣ Magnet Link</h3>')
         self.magnet_input = widgets.Textarea(
             placeholder='magnet:?xt=urn:btih:...',
             layout=widgets.Layout(width='100%', height='80px')
         )
         
-        self.analyze_btn = widgets.Button(
-            description='🔍 Analyze',
-            button_style='info',
-            layout=widgets.Layout(width='150px')
-        )
+        self.analyze_btn = widgets.Button(description='🔍 Analyze', button_style='info', layout=widgets.Layout(width='150px'))
         self.analyze_btn.on_click(self.on_analyze)
-        
-        # File selection (hidden)
         self.file_area = widgets.VBox([], layout=widgets.Layout(display='none'))
-        
-        # Step 2
         self.step2 = widgets.HTML('<h3 style="margin:10px 0 5px;">2️⃣ Download</h3>')
         self.auto_zip = widgets.Checkbox(value=True, description='Auto-zip', indent=False)
         self.add_trackers = widgets.Checkbox(value=True, description='Add trackers', indent=False)
-        
-        self.download_btn = widgets.Button(
-            description='⬇️ Download',
-            button_style='success',
-            disabled=True,
-            layout=widgets.Layout(width='150px')
-        )
+        self.download_btn = widgets.Button(description='⬇️ Download', button_style='success', disabled=True, layout=widgets.Layout(width='150px'))
         self.download_btn.on_click(self.on_download)
-        
-        self.stop_btn = widgets.Button(
-            description='⏹️ Stop',
-            button_style='danger',
-            disabled=True,
-            layout=widgets.Layout(width='80px')
-        )
+        self.stop_btn = widgets.Button(description='⏹️ Stop', button_style='danger', disabled=True, layout=widgets.Layout(width='80px'))
         self.stop_btn.on_click(self.on_stop)
-        
-        self.dl_progress = widgets.FloatProgress(
-            value=0, min=0, max=100,
-            bar_style='',
-            layout=widgets.Layout(width='100%')
-        )
+        self.dl_progress = widgets.FloatProgress(value=0, min=0, max=100, bar_style='', layout=widgets.Layout(width='100%'))
         self.dl_status = widgets.HTML('')
-        
-        # Step 3
         self.step3 = widgets.HTML('<h3 style="margin:10px 0 5px;">3️⃣ Upload</h3>')
-        self.file_selector = widgets.Dropdown(
-            options=[],
-            description='File:',
-            disabled=True,
-            layout=widgets.Layout(width='100%')
-        )
-        
-        self.folder_input = widgets.Text(
-            value='Torrent',
-            description='Folder:',
-            layout=widgets.Layout(width='300px')
-        )
-        
-        self.upload_btn = widgets.Button(
-            description='☁️ Upload',
-            button_style='primary',
-            disabled=True,
-            layout=widgets.Layout(width='150px')
-        )
+        self.file_selector = widgets.Dropdown(options=[], description='File:', disabled=True, layout=widgets.Layout(width='100%'))
+        self.folder_input = widgets.Text(value='Torrent', description='Folder:', layout=widgets.Layout(width='300px'))
+        self.upload_btn = widgets.Button(description='☁️ Upload', button_style='primary', disabled=True, layout=widgets.Layout(width='150px'))
         self.upload_btn.on_click(self.on_upload)
+        self.up_progress = widgets.FloatProgress(value=0, min=0, max=100, bar_style='', layout=widgets.Layout(width='100%'))
+        self.log_output = widgets.Output(layout={'border': '1px solid #ddd', 'padding': '5px', 'height': '250px', 'overflow': 'auto'})
         
-        self.up_progress = widgets.FloatProgress(
-            value=0, min=0, max=100,
-            bar_style='',
-            layout=widgets.Layout(width='100%')
-        )
-        
-        # Log
-        self.log_output = widgets.Output(
-            layout={'border': '1px solid #ddd', 'padding': '5px', 'height': '250px', 'overflow': 'auto'}
-        )
-        
-        # Layout
         self.ui = widgets.VBox([
-            self.title,
+            self.title, widgets.HTML('<hr style="margin:5px 0;">'),
+            self.step1, self.magnet_input, self.analyze_btn, self.file_area,
             widgets.HTML('<hr style="margin:5px 0;">'),
-            self.step1,
-            self.magnet_input,
-            self.analyze_btn,
-            self.file_area,
+            self.step2, widgets.HBox([self.auto_zip, self.add_trackers]),
+            widgets.HBox([self.download_btn, self.stop_btn]), self.dl_progress, self.dl_status,
             widgets.HTML('<hr style="margin:5px 0;">'),
-            self.step2,
-            widgets.HBox([self.auto_zip, self.add_trackers]),
-            widgets.HBox([self.download_btn, self.stop_btn]),
-            self.dl_progress,
-            self.dl_status,
-            widgets.HTML('<hr style="margin:5px 0;">'),
-            self.step3,
-            self.file_selector,
-            self.folder_input,
-            self.upload_btn,
-            self.up_progress,
+            self.step3, self.file_selector, self.folder_input, self.upload_btn, self.up_progress,
             widgets.HTML('<hr style="margin:5px 0;">'),
             widgets.HTML('<h4 style="margin:5px 0;">📋 Log</h4>'),
             self.log_output
@@ -855,19 +720,18 @@ class TorrentGUI:
             raise
 
 
-# ========== Launch ==========
 def main():
     try:
-        print('\n🚀 Launching optimized GUI...\n')
+        print('\n🚀 Launching GUI...\n')
         gui = TorrentGUI()
         gui.show()
     except ImportError as e:
-        print(f'❌ Missing required environment: {e}')
+        print(f'❌ Missing environment: {e}')
         print('💡 This script requires Jupyter or Google Colab')
         sys.exit(1)
     except Exception as e:
-        logger.exception(f"Failed to launch GUI: {e}")
-        print(f'❌ Unexpected error: {e}')
+        logger.exception(f"Failed to launch: {e}")
+        print(f'❌ Error: {e}')
         sys.exit(1)
 
 if __name__ == '__main__':
