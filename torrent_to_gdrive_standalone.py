@@ -42,7 +42,7 @@ def install_packages():
     
     for path in apt_paths:
         if path not in sys.path and os.path.exists(path):
-            sys.path.insert(0, path)
+            sys.path.append(path)
     
     try:
         result = subprocess.run(
@@ -119,9 +119,15 @@ except ImportError as e:
 try:
     import libtorrent as lt
 except ImportError as e:
-    print(f'❌ Failed to import libtorrent: {e}')
-    print('💡 Restart runtime and try again, or manually run: apt-get install python3-libtorrent')
-    sys.exit(1)
+    print(f'⚠️ libtorrent not importable, attempting pip wheel fallback: {e}')
+    try:
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', '-q', '--upgrade', '--force-reinstall', 'python-libtorrent'], timeout=120)
+        import libtorrent as lt
+        print('✅ libtorrent imported after pip fallback', flush=True)
+    except Exception as e2:
+        print(f'❌ Failed to import libtorrent: {e2}')
+        print('💡 Restart runtime and try again, or manually run: apt-get install python3-libtorrent')
+        sys.exit(1)
 
 import shutil
 import zipfile
