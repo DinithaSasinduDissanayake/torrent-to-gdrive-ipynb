@@ -74,8 +74,20 @@ def install_packages():
 
 install_packages()
 
-import ipywidgets as widgets
-import libtorrent as lt
+try:
+    import ipywidgets as widgets
+except ImportError as e:
+    print(f'❌ Failed to import ipywidgets: {e}')
+    print('💡 Run: pip install ipywidgets')
+    sys.exit(1)
+
+try:
+    import libtorrent as lt
+except ImportError as e:
+    print(f'❌ Failed to import libtorrent: {e}')
+    print('💡 Try: apt-get install python3-libtorrent or pip install libtorrent')
+    sys.exit(1)
+
 import shutil
 import zipfile
 
@@ -100,8 +112,13 @@ BANDWIDTH_LIMIT_UPLOAD_MBPS = 5
 IN_COLAB = 'google.colab' in sys.modules
 LOCAL_DIR = '/content/torrents' if IN_COLAB else './torrents'
 RESUME_DATA_DIR = os.path.join(LOCAL_DIR, '.resume_data')
-os.makedirs(LOCAL_DIR, exist_ok=True)
-os.makedirs(RESUME_DATA_DIR, exist_ok=True)
+
+try:
+    os.makedirs(LOCAL_DIR, exist_ok=True)
+    os.makedirs(RESUME_DATA_DIR, exist_ok=True)
+except OSError as e:
+    print(f'❌ Failed to create directories: {e}')
+    sys.exit(1)
 
 def sanitize_path(base_dir: str, file_path: str) -> Optional[str]:
     """Sanitize file path to prevent directory traversal attacks."""
@@ -144,6 +161,8 @@ if IN_COLAB:
         drive_mounted = os.path.exists('/content/drive/MyDrive')
         if drive_mounted:
             print('✅ Google Drive ready')
+    except ImportError as e:
+        print(f'⚠️ Not running in Colab environment: {e}')
     except Exception as e:
         print(f'⚠️ Drive mount skipped: {e}')
 
@@ -178,24 +197,28 @@ class GlobalTorrentSession:
                     logger.warning("Stale session detected, reinitializing")
                     self._initialized = False
             
-            settings = {
-                'enable_dht': True,
-                'enable_lsd': True,
-                'enable_natpmp': False,
-                'enable_upnp': False,
-                'connections_limit': 500,
-                'download_rate_limit': 25 * 1024 * 1024,
-                'upload_rate_limit': 5 * 1024 * 1024,
-                'active_downloads': 10,
-                'active_seeds': 5,
-                'active_limit': 15,
-                'alert_mask': lt.alert.category_t.error_notification | lt.alert.category_t.status_notification,
-            }
-            self._session = lt.session(settings)
-            self._active_handles = set()
-            self._handles_lock = threading.Lock()
-            self._initialized = True
-            logger.info("Global torrent session initialized")
+            try:
+                settings = {
+                    'enable_dht': True,
+                    'enable_lsd': True,
+                    'enable_natpmp': False,
+                    'enable_upnp': False,
+                    'connections_limit': 500,
+                    'download_rate_limit': 25 * 1024 * 1024,
+                    'upload_rate_limit': 5 * 1024 * 1024,
+                    'active_downloads': 10,
+                    'active_seeds': 5,
+                    'active_limit': 15,
+                    'alert_mask': lt.alert.category_t.error_notification | lt.alert.category_t.status_notification,
+                }
+                self._session = lt.session(settings)
+                self._active_handles = set()
+                self._handles_lock = threading.Lock()
+                self._initialized = True
+                logger.info("Global torrent session initialized")
+            except Exception as e:
+                logger.error(f"Failed to create libtorrent session: {e}")
+                raise RuntimeError(f"Could not initialize torrent session: {e}")
     
     @property
     def session(self):
@@ -294,7 +317,12 @@ class TorrentDownloader:
             
             self.session = self._create_optimized_session()
             
-            params = lt.parse_magnet_uri(magnet_link)
+            try:
+                params = lt.parse_magnet_uri(magnet_link)
+            except Exception as e:
+                self.log(f'❌ Invalid magnet link format: {str(e)}', 'error')
+                return None
+            
             params.save_path = '/tmp'
             self.handle = self.session.add_torrent(params)
             
@@ -383,7 +411,12 @@ class TorrentDownloader:
             
             self.session = self._create_optimized_session()
             
-            params = lt.parse_magnet_uri(magnet_link)
+            try:
+                params = lt.parse_magnet_uri(magnet_link)
+            except Exception as e:
+                self.log(f'❌ Invalid magnet link format: {str(e)}', 'error')
+                return False
+            
             params.save_path = save_path
             params.flags |= lt.add_torrent_params_flags_t.flag_use_resume_save_path
             
@@ -700,7 +733,11 @@ class TorrentGUI:
         self.create_widgets()
     
     def create_widgets(self):
-        from IPython.display import display, HTML
+        try:
+            from IPython.display import display, HTML
+        except ImportError:
+            print('❌ IPython not available - GUI requires Jupyter/Colab environment')
+            raise
         
         # Compact title
         self.title = widgets.HTML('<h2 style="color:#1a73e8;margin:0;">📥 Torrent → Drive</h2>')
@@ -814,11 +851,14 @@ class TorrentGUI:
             self.add_log('✅ Drive mounted', 'success')
     
     def add_log(self, msg: str, style: str = 'info'):
-        from IPython.display import HTML
-        colors = {'info': '#1a73e8', 'success': '#188038', 'warning': '#e37400', 'error': '#d93025'}
-        with self._gui_lock:
-            with self.log_output:
-                display(HTML(f'<span style="color:{colors.get(style, "#000")};font-size:12px;">[{time.strftime("%H:%M:%S")}] {msg}</span>'))
+        try:
+            from IPython.display import HTML, display
+            colors = {'info': '#1a73e8', 'success': '#188038', 'warning': '#e37400', 'error': '#d93025'}
+            with self._gui_lock:
+                with self.log_output:
+                    display(HTML(f'<span style="color:{colors.get(style, "#000")};font-size:12px;">[{time.strftime("%H:%M:%S")}] {msg}</span>'))
+        except ImportError:
+            print(f'[{time.strftime("%H:%M:%S")}] {msg}')
     
     def update_dl_progress(self, pct: float, down: float, up: float, peers: int, eta: str):
         with self._gui_lock:
@@ -831,12 +871,19 @@ class TorrentGUI:
     
     def refresh_files(self):
         files = []
-        for root, _, filenames in os.walk(LOCAL_DIR):
-            for fn in filenames:
-                if not fn.startswith('.'):
-                    fp = os.path.join(root, fn)
-                    sz = os.path.getsize(fp) / (1024**2)
-                    files.append((f'{fn} ({sz:.0f} MB)', fp))
+        try:
+            for root, _, filenames in os.walk(LOCAL_DIR):
+                for fn in filenames:
+                    if not fn.startswith('.'):
+                        fp = os.path.join(root, fn)
+                        try:
+                            sz = os.path.getsize(fp) / (1024**2)
+                            files.append((f'{fn} ({sz:.0f} MB)', fp))
+                        except OSError as e:
+                            logger.warning(f"Could not access file {fp}: {e}")
+        except OSError as e:
+            logger.error(f"Could not scan directory {LOCAL_DIR}: {e}")
+            self.add_log(f'⚠️ Could not refresh file list: {e}', 'warning')
         
         self.file_selector.options = files
         if files:
@@ -961,15 +1008,28 @@ class TorrentGUI:
         get_thread_pool().submit(run)
     
     def show(self):
-        from IPython.display import display
-        display(self.ui)
+        try:
+            from IPython.display import display
+            display(self.ui)
+        except ImportError:
+            print('❌ IPython not available - GUI requires Jupyter/Colab environment')
+            raise
 
 
 # ========== Launch ==========
 def main():
-    print('\n🚀 Launching optimized GUI...\n')
-    gui = TorrentGUI()
-    gui.show()
+    try:
+        print('\n🚀 Launching optimized GUI...\n')
+        gui = TorrentGUI()
+        gui.show()
+    except ImportError as e:
+        print(f'❌ Missing required environment: {e}')
+        print('💡 This script requires Jupyter or Google Colab')
+        sys.exit(1)
+    except Exception as e:
+        logger.exception(f"Failed to launch GUI: {e}")
+        print(f'❌ Unexpected error: {e}')
+        sys.exit(1)
 
 if __name__ == '__main__':
     main()
