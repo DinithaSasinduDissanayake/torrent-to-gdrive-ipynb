@@ -25,10 +25,21 @@ from typing import Optional, Callable
 from urllib.parse import quote
 
 # ========== Fast Dependency Installation ==========
-def install_packages():
-    """Install all required packages efficiently."""
-    print('🚀 Installing dependencies (this takes ~30s)...', flush=True)
+def install_dependencies():
+    """Installs all dependencies, handling apt, sys.path, and pip fallbacks."""
+    print('🚀 Installing dependencies...', flush=True)
     
+    # 1. Attempt to install libtorrent via apt, which is preferred in Colab
+    try:
+        subprocess.run(
+            ['apt-get', 'install', '-y', 'python3-libtorrent'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=60
+        )
+        print('✅ libtorrent installed via apt.', flush=True)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        print(f'⚠️ apt install failed, will try pip. Reason: {e}', flush=True)
+
+    # 2. Add potential system paths for apt-installed packages to the front of sys.path
     apt_paths = [
         '/usr/lib/python3/dist-packages',
         '/usr/local/lib/python3/dist-packages',
@@ -36,95 +47,58 @@ def install_packages():
         '/usr/lib/python3.11/dist-packages',
         '/usr/lib/python3.10/dist-packages'
     ]
-    
     for path in apt_paths:
-        if path not in sys.path and os.path.exists(path):
-            sys.path.append(path)
-    
+        if os.path.exists(path) and path not in sys.path:
+            sys.path.insert(0, path)
+
+    # 3. Try importing libtorrent. If it fails, fall back to pip.
     try:
-        result = subprocess.run(
-            ['apt-get', 'install', '-y', 'python3-libtorrent'],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=60
+        import libtorrent as lt
+        print('✅ libtorrent is importable.', flush=True)
+    except ImportError:
+        print('⚠️ libtorrent not importable after apt, trying pip...', flush=True)
+        try:
+            subprocess.run(
+                [sys.executable, '-m', 'pip', 'install', '-q', 'libtorrent'], 
+                check=True, timeout=120
+            )
+            print('✅ libtorrent installed via pip.', flush=True)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            print(f'❌ Failed to install libtorrent via pip: {e}', flush=True)
+            raise RuntimeError('FATAL: libtorrent could not be installed.') from e
+
+    # 4. Install other required packages
+    other_packages = ['ipywidgets', 'google-api-python-client', 'google-auth-httplib2', 'google-auth-oauthlib']
+    try:
+        subprocess.run(
+            [sys.executable, '-m', 'pip', 'install', '-q', *other_packages], 
+            check=True, timeout=120
         )
-        if result.returncode == 0:
-            print('✅ libtorrent installed via apt', flush=True)
-        else:
-            raise subprocess.CalledProcessError(result.returncode, 'apt-get')
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
-        print(f'⚠️ apt install failed, trying pip: {e}', flush=True)
-        try:
-            subprocess.check_call(
-                [sys.executable, '-m', 'pip', 'install', '-q', '--upgrade', '--force-reinstall', 'libtorrent'],
-                timeout=120
-            )
-            print('✅ libtorrent installed via pip', flush=True)
-        except Exception as pip_error:
-            print(f'❌ Failed to install libtorrent via pip: {pip_error}', flush=True)
-            print('💡 Trying alternative: python-libtorrent', flush=True)
-            try:
-                subprocess.check_call(
-                    [sys.executable, '-m', 'pip', 'install', '-q', 'python-libtorrent'],
-                    timeout=120
-                )
-                print('✅ python-libtorrent installed', flush=True)
-            except Exception as alt_error:
-                print(f'❌ All installation methods failed: {alt_error}', flush=True)
-                raise
-    
-    packages = [
-        'ipywidgets',
-        'google-api-python-client',
-        'google-auth-httplib2',
-        'google-auth-oauthlib',
-    ]
-    
-    for pkg in packages:
-        try:
-            subprocess.check_call(
-                [sys.executable, '-m', 'pip', 'install', '-q', '--no-warn-conflicts', pkg],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=120
-            )
-        except subprocess.CalledProcessError as e:
-            print(f'⚠️ Failed to install {pkg}: {e}', flush=True)
-            raise
-    print('✅ All dependencies installed!')
+        print('✅ Other dependencies installed.', flush=True)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        print(f'❌ Failed to install other dependencies: {e}', flush=True)
+        raise RuntimeError('FATAL: Could not install required Python packages.') from e
 
-install_packages()
+    print('✅ All dependencies are set up.', flush=True)
 
-apt_paths = [
-    '/usr/lib/python3/dist-packages',
-    '/usr/local/lib/python3/dist-packages',
-    '/usr/lib/python3.12/dist-packages',
-    '/usr/lib/python3.11/dist-packages',
-    '/usr/lib/python3.10/dist-packages'
-]
-for path in apt_paths:
-    if path not in sys.path and os.path.exists(path):
-        sys.path.insert(0, path)
+# Run the robust installation function
+install_dependencies()
 
+# Now, perform critical imports. If any fail, the environment is not set up correctly.
 try:
     import ipywidgets as widgets
+    import libtorrent as lt
 except ImportError as e:
-    print(f'❌ Failed to import ipywidgets: {e}')
-    print('💡 Run: pip install ipywidgets')
+    print(f'❌ Critical import failed after installation: {e}', file=sys.stderr)
+    print('💡 Please restart the Colab runtime and try running the script again.', file=sys.stderr)
     sys.exit(1)
 
 try:
     import libtorrent as lt
 except ImportError as e:
-    print(f'⚠️ libtorrent not importable, attempting pip wheel fallback: {e}')
-    try:
-        subprocess.check_call([sys.executable, '-m', 'pip', 'install', '-q', '--upgrade', '--force-reinstall', 'python-libtorrent'], timeout=120)
-        import libtorrent as lt
-        print('✅ libtorrent imported after pip fallback', flush=True)
-    except Exception as e2:
-        print(f'❌ Failed to import libtorrent: {e2}')
-        print('💡 Restart runtime and try again, or manually run: apt-get install python3-libtorrent')
-        sys.exit(1)
+    print(f'❌ Failed to import libtorrent after all attempts: {e}')
+    print('💡 Please restart the runtime and try again.')
+    sys.exit(1)
 
 import shutil
 import zipfile
