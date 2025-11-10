@@ -23,10 +23,9 @@ This repository contains Jupyter Notebooks that download torrents and upload the
 - Drive API with MD5 verification
 - Optional interactive GUI included
 
-### Legacy: `torrent_notebook_v1.ipynb`
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/DinithaSasinduDissanayake/torrent-to-gdrive-ipynb/blob/main/torrent_notebook_v1.ipynb)
+### Legacy: v1 (Archived)
 
-Earlier version kept for reference
+The original `torrent_notebook_v1.ipynb` has been archived to `archive/` directory. Use v2 or v3 instead.
 
 ## Quick Start (v3 GUI)
 
@@ -93,3 +92,7 @@ Note: API limits still apply; MD5 verification and backoff are handled different
 
 ## Usage (Local Dev)
 - Keep secrets out of the repo. Use Colab auth or Application Default Credentials (ADC) for local runs (set `GOOGLE_APPLICATION_CREDENTIALS` to a service account JSON).
+
+## Detailed Comparison
+
+For an in-depth comparison of v2 vs v3 features, architecture, and best use cases, see **[COMPARISON.md](./COMPARISON.md)**.
