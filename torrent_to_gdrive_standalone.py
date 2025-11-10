@@ -32,34 +32,49 @@ def install_packages():
     """Install all required packages efficiently."""
     print('🚀 Installing dependencies (this takes ~30s)...', flush=True)
     
-    lt_installed = False
+    apt_paths = [
+        '/usr/lib/python3/dist-packages',
+        '/usr/local/lib/python3/dist-packages',
+        '/usr/lib/python3.12/dist-packages',
+        '/usr/lib/python3.11/dist-packages',
+        '/usr/lib/python3.10/dist-packages'
+    ]
+    
+    for path in apt_paths:
+        if path not in sys.path and os.path.exists(path):
+            sys.path.insert(0, path)
+    
     try:
-        subprocess.check_call(
+        result = subprocess.run(
             ['apt-get', 'install', '-y', 'python3-libtorrent'],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=60
         )
-        sys.path.insert(0, '/usr/lib/python3/dist-packages')
-        try:
-            import libtorrent
+        if result.returncode == 0:
             print('✅ libtorrent installed via apt', flush=True)
-            lt_installed = True
-        except ImportError:
-            print('⚠️ apt installed but not importable, trying pip...', flush=True)
+        else:
+            raise subprocess.CalledProcessError(result.returncode, 'apt-get')
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
-        print(f'⚠️ apt-get install failed, trying pip: {e}', flush=True)
-    
-    if not lt_installed:
+        print(f'⚠️ apt install failed, trying pip: {e}', flush=True)
         try:
             subprocess.check_call(
-                [sys.executable, '-m', 'pip', 'install', '-q', 'libtorrent'],
+                [sys.executable, '-m', 'pip', 'install', '-q', '--upgrade', '--force-reinstall', 'libtorrent'],
                 timeout=120
             )
             print('✅ libtorrent installed via pip', flush=True)
         except Exception as pip_error:
-            print(f'❌ Failed to install libtorrent: {pip_error}', flush=True)
-            raise
+            print(f'❌ Failed to install libtorrent via pip: {pip_error}', flush=True)
+            print('💡 Trying alternative: python-libtorrent', flush=True)
+            try:
+                subprocess.check_call(
+                    [sys.executable, '-m', 'pip', 'install', '-q', 'python-libtorrent'],
+                    timeout=120
+                )
+                print('✅ python-libtorrent installed', flush=True)
+            except Exception as alt_error:
+                print(f'❌ All installation methods failed: {alt_error}', flush=True)
+                raise
     
     packages = [
         'ipywidgets',
@@ -83,8 +98,16 @@ def install_packages():
 
 install_packages()
 
-if '/usr/lib/python3/dist-packages' not in sys.path:
-    sys.path.insert(0, '/usr/lib/python3/dist-packages')
+apt_paths = [
+    '/usr/lib/python3/dist-packages',
+    '/usr/local/lib/python3/dist-packages',
+    '/usr/lib/python3.12/dist-packages',
+    '/usr/lib/python3.11/dist-packages',
+    '/usr/lib/python3.10/dist-packages'
+]
+for path in apt_paths:
+    if path not in sys.path and os.path.exists(path):
+        sys.path.insert(0, path)
 
 try:
     import ipywidgets as widgets
@@ -97,7 +120,7 @@ try:
     import libtorrent as lt
 except ImportError as e:
     print(f'❌ Failed to import libtorrent: {e}')
-    print('💡 Try: apt-get install python3-libtorrent or pip install libtorrent')
+    print('💡 Restart runtime and try again, or manually run: apt-get install python3-libtorrent')
     sys.exit(1)
 
 import shutil
