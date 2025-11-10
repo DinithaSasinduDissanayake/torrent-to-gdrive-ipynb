@@ -20,12 +20,9 @@ import os
 import time
 import threading
 import logging
-import json
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, List, Dict, Callable
+from typing import Optional, Callable
 from urllib.parse import quote
-import gc
 
 # ========== Fast Dependency Installation ==========
 def install_packages():
@@ -139,12 +136,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TORRENT_PRIORITY_IGNORE = 0
-TORRENT_PRIORITY_NORMAL = 4
-TORRENT_PRIORITY_HIGH = 7
-RESUME_DATA_SAVE_INTERVAL = 300
 MAX_CONCURRENT_THREADS = 2
-DOWNLOAD_TIMEOUT_MINUTES = 15
 METADATA_TIMEOUT_SECONDS = 900
 BANDWIDTH_LIMIT_DOWNLOAD_MBPS = 25
 BANDWIDTH_LIMIT_UPLOAD_MBPS = 5
@@ -152,31 +144,13 @@ BANDWIDTH_LIMIT_UPLOAD_MBPS = 5
 # ========== Configuration ==========
 IN_COLAB = 'google.colab' in sys.modules
 LOCAL_DIR = '/content/torrents' if IN_COLAB else './torrents'
-RESUME_DATA_DIR = os.path.join(LOCAL_DIR, '.resume_data')
 
 try:
     os.makedirs(LOCAL_DIR, exist_ok=True)
-    os.makedirs(RESUME_DATA_DIR, exist_ok=True)
 except OSError as e:
     print(f'❌ Failed to create directories: {e}')
     sys.exit(1)
 
-def sanitize_path(base_dir: str, file_path: str) -> Optional[str]:
-    """Sanitize file path to prevent directory traversal attacks."""
-    try:
-        base = Path(base_dir).resolve()
-        target = (base / file_path).resolve()
-        
-        if not str(target).startswith(str(base)):
-            logger.error(f"Path traversal attempt detected: {file_path}")
-            return None
-        
-        return str(target)
-    except Exception as e:
-        logger.error(f"Path sanitization error: {e}")
-        return None
-
-# Enhanced tracker list (tested and working)
 PUBLIC_TRACKERS = [
     'udp://tracker.opentrackr.org:1337/announce',
     'udp://open.stealth.si:80/announce',
@@ -207,110 +181,63 @@ if IN_COLAB:
     except Exception as e:
         print(f'⚠️ Drive mount skipped: {e}')
 
+_global_session = None
+_session_lock = threading.Lock()
 
-# ========== Global Session Singleton ==========
-class GlobalTorrentSession:
-    _instance = None
-    _lock = threading.Lock()
-    
-    def __new__(cls):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
-    
-    def __init__(self):
-        if self._initialized:
-            return
-        
-        with GlobalTorrentSession._lock:
-            if self._initialized:
-                return
-            
-            if hasattr(self, '_session') and self._session:
+def get_global_session():
+    global _global_session
+    if _global_session is None:
+        with _session_lock:
+            if _global_session is None:
                 try:
-                    self._session.post_torrent_updates()
-                    logger.info("Reusing existing session")
-                    return
-                except (RuntimeError, AttributeError):
-                    logger.warning("Stale session detected, reinitializing")
-                    self._initialized = False
-            
-            try:
-                settings = {
-                    'enable_dht': True,
-                    'enable_lsd': True,
-                    'enable_natpmp': False,
-                    'enable_upnp': False,
-                    'connections_limit': 500,
-                    'download_rate_limit': 25 * 1024 * 1024,
-                    'upload_rate_limit': 5 * 1024 * 1024,
-                    'active_downloads': 10,
-                    'active_seeds': 5,
-                    'active_limit': 15,
-                    'alert_mask': lt.alert.category_t.error_notification | lt.alert.category_t.status_notification,
-                }
-                self._session = lt.session(settings)
-                self._active_handles = set()
-                self._handles_lock = threading.Lock()
-                self._initialized = True
-                logger.info("Global torrent session initialized")
-            except Exception as e:
-                logger.error(f"Failed to create libtorrent session: {e}")
-                raise RuntimeError(f"Could not initialize torrent session: {e}")
-    
-    @property
-    def session(self):
-        return self._session
-    
-    def register_handle(self, handle):
-        with self._handles_lock:
-            self._active_handles.add(handle)
-    
-    def unregister_handle(self, handle):
-        with self._handles_lock:
-            self._active_handles.discard(handle)
-            try:
-                self._session.remove_torrent(handle)
-                logger.info("Torrent handle removed from session")
-            except Exception as e:
-                logger.error(f"Failed to remove torrent handle: {e}")
-    
-    def cleanup(self):
-        with self._handles_lock:
-            for handle in list(self._active_handles):
-                try:
-                    self._session.remove_torrent(handle)
+                    settings = {
+                        'enable_dht': True,
+                        'enable_lsd': True,
+                        'enable_natpmp': False,
+                        'enable_upnp': False,
+                        'connections_limit': 500,
+                        'download_rate_limit': 25 * 1024 * 1024,
+                        'upload_rate_limit': 5 * 1024 * 1024,
+                        'active_downloads': 10,
+                        'active_seeds': 5,
+                        'active_limit': 15,
+                        'alert_mask': lt.alert.category_t.error_notification | lt.alert.category_t.status_notification,
+                    }
+                    _global_session = lt.session(settings)
+                    logger.info("Global torrent session initialized")
                 except Exception as e:
-                    logger.error(f"Error removing handle during cleanup: {e}")
-            self._active_handles.clear()
+                    logger.error(f"Failed to create libtorrent session: {e}")
+                    raise RuntimeError(f"Could not initialize torrent session: {e}")
+    return _global_session
 
 
-# ========== Thread Pool Manager ==========
 _thread_pool = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_THREADS, thread_name_prefix="torrent_worker")
-
-def get_thread_pool():
-    return _thread_pool
 
 
 # ========== Optimized Torrent Downloader ==========
 class TorrentDownloader:
-    """Optimized torrent downloader for Colab environment."""
     
     def __init__(self, progress_callback: Optional[Callable] = None, 
                  status_callback: Optional[Callable] = None):
         self.progress_callback = progress_callback
         self.status_callback = status_callback
-        self.session_manager = GlobalTorrentSession()
-        self.session = self.session_manager.session
+        self.session = get_global_session()
         self.handle = None
         self.should_stop = False
         self.timeout_s = 900
         self._stop_event = threading.Event()
         self._log_lock = threading.Lock()
         self._torrent_lock = threading.Lock()
+    
+    def _handle_error(self, error: Exception, context: str = "") -> bool:
+        if isinstance(error, (lt.LibtorrentError, RuntimeError)):
+            self.log(f'❌ Torrent error: {str(error)}', 'error')
+        elif isinstance(error, OSError):
+            self.log(f'❌ File system error: {str(error)}', 'error')
+        else:
+            logger.exception(f"Unexpected error in {context}: {error}")
+            self.log(f'❌ Unexpected error: {str(error)}', 'error')
+        return False
     
     def log(self, msg: str, style: str = 'info'):
         with self._log_lock:
@@ -329,10 +256,6 @@ class TorrentDownloader:
         if self.progress_callback:
             self.progress_callback(percent, speed_down, speed_up, peers, eta)
     
-    def _create_optimized_session(self):
-        """Get the global libtorrent session."""
-        return self.session
-    
     def _add_trackers_to_magnet(self, magnet_link: str, add_trackers: bool) -> str:
         """Efficiently add trackers to magnet link with URL encoding."""
         if not add_trackers:
@@ -345,18 +268,13 @@ class TorrentDownloader:
         return magnet_link
     
     def analyze_torrent(self, magnet_link: str, add_trackers: bool = True):
-        """Analyze torrent and return file info."""
         try:
             self.should_stop = False
             self._stop_event.clear()
             self.log('🔧 Initializing engine...', 'info')
             
             if add_trackers:
-                for tracker in PUBLIC_TRACKERS:
-                    if tracker not in magnet_link:
-                        magnet_link += f'&tr={tracker}'
-            
-            self.session = self._create_optimized_session()
+                magnet_link = self._add_trackers_to_magnet(magnet_link, add_trackers)
             
             try:
                 params = lt.parse_magnet_uri(magnet_link)
@@ -396,12 +314,6 @@ class TorrentDownloader:
                 
                 for i in range(files.num_files()):
                     file_path = files.file_path(i)
-                    
-                    sanitized = sanitize_path(LOCAL_DIR, file_path)
-                    if not sanitized:
-                        logger.warning(f"Skipping invalid file path: {file_path}")
-                        continue
-                    
                     file_size = files.file_size(i)
                     total_size += file_size
                     file_list.append({
@@ -424,33 +336,20 @@ class TorrentDownloader:
                 'files': file_list
             }
             
-        except (lt.LibtorrentError, RuntimeError) as e:
-            self.log(f'❌ Torrent error: {str(e)}', 'error')
-            return None
-        except OSError as e:
-            self.log(f'❌ File system error: {str(e)}', 'error')
-            return None
         except Exception as e:
-            logger.exception(f"Unexpected error in analyze_torrent: {e}")
-            self.log(f'❌ Unexpected error: {str(e)}', 'error')
-            return None
+            return None if self._handle_error(e, "analyze_torrent") else None
         finally:
             self._cleanup_handle()
     
     def download(self, magnet_link: str, save_path: str, add_trackers: bool = True, 
-                 auto_zip: bool = False, zip_name: str = None, selected_files: list = None) -> bool:
-        """Download torrent with optimizations."""
+                 auto_zip: bool = False, selected_files: list = None) -> bool:
         try:
             self.should_stop = False
             self._stop_event.clear()
             self.log('🔧 Starting download engine...', 'info')
             
             if add_trackers:
-                for tracker in PUBLIC_TRACKERS:
-                    if tracker not in magnet_link:
-                        magnet_link += f'&tr={tracker}'
-            
-            self.session = self._create_optimized_session()
+                magnet_link = self._add_trackers_to_magnet(magnet_link, add_trackers)
             
             try:
                 params = lt.parse_magnet_uri(magnet_link)
@@ -459,18 +358,6 @@ class TorrentDownloader:
                 return False
             
             params.save_path = save_path
-            params.flags |= lt.add_torrent_params_flags_t.flag_use_resume_save_path
-            
-            info_hash_str = str(params.info_hash) if hasattr(params, 'info_hash') else None
-            if info_hash_str:
-                resume_data = self._load_resume_data(info_hash_str)
-                if resume_data:
-                    try:
-                        params = lt.read_resume_data(resume_data)
-                        params.save_path = save_path
-                        logger.info("Loaded resume data for existing download")
-                    except Exception as e:
-                        logger.warning(f"Failed to parse resume data: {e}")
             
             self.handle = self.session.add_torrent(params)
             
@@ -496,14 +383,6 @@ class TorrentDownloader:
                 if torrent_info:
                     files = torrent_info.files()
                     num_files = files.num_files()
-                    
-                    for i in range(num_files):
-                        file_path = files.file_path(i)
-                        sanitized = sanitize_path(save_path, file_path)
-                        if not sanitized:
-                            logger.error(f"Malicious file path detected: {file_path}")
-                            self.log(f'❌ Security: Invalid file path rejected', 'error')
-                            return False
                     
                     if selected_files is not None:
                         priorities = [0] * num_files
@@ -540,11 +419,9 @@ class TorrentDownloader:
             
             self.log('⬇️ Downloading...', 'info')
             
-            last_save_time = time.time()
             while not status.is_seeding:
                 if self._stop_event.wait(2):
                     self.log('⚠️ Stopped', 'warning')
-                    self._save_resume_data()
                     return False
                 
                 status = self.handle.status()
@@ -562,18 +439,13 @@ class TorrentDownloader:
                     eta = '∞'
                 
                 self.update_progress(progress, speed_down, speed_up, peers, eta)
-                
-                if time.time() - last_save_time > 300:
-                    self._save_resume_data()
-                    last_save_time = time.time()
             
             self.log('🎉 Download complete!', 'success')
-            self._save_resume_data()
             
             if auto_zip:
                 self.log('🗜️ Creating zip...', 'info')
                 name = status.name or 'download'
-                zip_base = zip_name or name.replace(' ', '_')
+                zip_base = name.replace(' ', '_')
                 target = os.path.join(save_path, name)
                 zip_output = os.path.join(save_path, f'{zip_base}.zip')
                 
@@ -602,63 +474,20 @@ class TorrentDownloader:
             
             return True
             
-        except (lt.LibtorrentError, RuntimeError) as e:
-            self.log(f'❌ Torrent error: {str(e)}', 'error')
-            return False
-        except OSError as e:
-            self.log(f'❌ File system error: {str(e)}', 'error')
-            return False
         except Exception as e:
-            logger.exception(f"Unexpected error in download: {e}")
-            self.log(f'❌ Unexpected error: {str(e)}', 'error')
-            return False
+            return self._handle_error(e, "download")
         finally:
             self._cleanup_handle()
     
-    def _save_resume_data(self):
-        """Save resume data for recovery."""
-        if not self.handle or not self.handle.is_valid():
-            return
-        
-        try:
-            self.handle.save_resume_data()
-            alerts = self.session.pop_alerts()
-            
-            for alert in alerts:
-                if isinstance(alert, lt.save_resume_data_alert):
-                    resume_data = lt.write_resume_data(alert.params)
-                    info_hash = str(alert.handle.info_hash())
-                    resume_file = os.path.join(RESUME_DATA_DIR, f'{info_hash}.fastresume')
-                    
-                    with open(resume_file, 'wb') as f:
-                        f.write(resume_data)
-                    logger.info(f"Resume data saved: {info_hash}")
-                    break
-        except Exception as e:
-            logger.error(f"Failed to save resume data: {e}")
-    
-    def _load_resume_data(self, info_hash: str) -> Optional[bytes]:
-        """Load resume data from disk."""
-        try:
-            resume_file = os.path.join(RESUME_DATA_DIR, f'{info_hash}.fastresume')
-            if os.path.exists(resume_file):
-                with open(resume_file, 'rb') as f:
-                    return f.read()
-        except Exception as e:
-            logger.error(f"Failed to load resume data: {e}")
-        return None
-    
     def _cleanup_handle(self):
-        """Clean up torrent handle but keep session alive."""
         if self.handle and self.handle.is_valid():
             try:
                 self.handle.pause()
-                self.session_manager.unregister_handle(self.handle)
+                self.session.remove_torrent(self.handle)
                 logger.info("Torrent handle cleaned up")
             except Exception as e:
                 logger.error(f"Error during cleanup: {e}")
         self.handle = None
-        gc.collect()
     
     def stop(self):
         self.should_stop = True
@@ -667,12 +496,16 @@ class TorrentDownloader:
 
 # ========== Drive Uploader ==========
 class DriveUploader:
-    """Upload files to Google Drive."""
     
     def __init__(self, progress_callback=None, status_callback=None):
         self.progress_callback = progress_callback
         self.status_callback = status_callback
         self.service = None
+    
+    def _handle_error(self, error: Exception, context: str) -> bool:
+        logger.exception(f"{context} error: {error}")
+        self.log(f'❌ {context} failed: {error}', 'error')
+        return False
     
     def log(self, msg: str, style: str = 'info'):
         if self.status_callback:
@@ -692,13 +525,8 @@ class DriveUploader:
             self.service = build('drive', 'v3', credentials=creds, cache_discovery=False)
             self.log('✅ Authenticated', 'success')
             return True
-        except ImportError as e:
-            self.log(f'❌ Colab auth not available: {e}', 'error')
-            return False
         except Exception as e:
-            logger.exception(f"Authentication error: {e}")
-            self.log(f'❌ Auth failed: {e}', 'error')
-            return False
+            return self._handle_error(e, "Authentication")
     
     def upload_file(self, file_path: str, folder_name: str = 'Torrent') -> bool:
         try:
@@ -746,16 +574,8 @@ class DriveUploader:
             self.log(f'🔗 {response.get("webViewLink", "N/A")}', 'success')
             return True
             
-        except HttpError as e:
-            self.log(f'❌ Google Drive API error: {e}', 'error')
-            return False
-        except OSError as e:
-            self.log(f'❌ File access error: {e}', 'error')
-            return False
         except Exception as e:
-            logger.exception(f"Upload error: {e}")
-            self.log(f'❌ Upload failed: {e}', 'error')
-            return False
+            return self._handle_error(e, "Upload")
 
 
 # ========== Optimized GUI ==========
@@ -978,7 +798,7 @@ class TorrentGUI:
             
             self.analyze_btn.disabled = False
         
-        get_thread_pool().submit(run)
+        _thread_pool.submit(run)
     
     def on_download(self, b):
         magnet = self.magnet_input.value.strip()
@@ -1018,7 +838,7 @@ class TorrentGUI:
             self.stop_btn.disabled = True
             self.analyze_btn.disabled = False
         
-        get_thread_pool().submit(run)
+        _thread_pool.submit(run)
     
     def on_stop(self, b):
         if self.downloader:
@@ -1046,7 +866,7 @@ class TorrentGUI:
             
             self.upload_btn.disabled = False
         
-        get_thread_pool().submit(run)
+        _thread_pool.submit(run)
     
     def show(self):
         try:
