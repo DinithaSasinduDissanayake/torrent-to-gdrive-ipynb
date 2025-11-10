@@ -24,6 +24,7 @@ import json
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, List, Dict, Callable
+from urllib.parse import quote
 import gc
 
 # ========== Fast Dependency Installation ==========
@@ -76,6 +77,10 @@ TORRENT_PRIORITY_NORMAL = 4
 TORRENT_PRIORITY_HIGH = 7
 RESUME_DATA_SAVE_INTERVAL = 300
 MAX_CONCURRENT_THREADS = 2
+DOWNLOAD_TIMEOUT_MINUTES = 15
+METADATA_TIMEOUT_SECONDS = 900
+BANDWIDTH_LIMIT_DOWNLOAD_MBPS = 25
+BANDWIDTH_LIMIT_UPLOAD_MBPS = 5
 
 # ========== Configuration ==========
 IN_COLAB = 'google.colab' in sys.modules
@@ -149,6 +154,15 @@ class GlobalTorrentSession:
         with GlobalTorrentSession._lock:
             if self._initialized:
                 return
+            
+            if hasattr(self, '_session') and self._session:
+                try:
+                    self._session.post_torrent_updates()
+                    logger.info("Reusing existing session")
+                    return
+                except (RuntimeError, AttributeError):
+                    logger.warning("Stale session detected, reinitializing")
+                    self._initialized = False
             
             settings = {
                 'enable_dht': True,
@@ -242,13 +256,13 @@ class TorrentDownloader:
         return self.session
     
     def _add_trackers_to_magnet(self, magnet_link: str, add_trackers: bool) -> str:
-        """Efficiently add trackers to magnet link."""
+        """Efficiently add trackers to magnet link with URL encoding."""
         if not add_trackers:
             return magnet_link
         
         trackers_to_add = [t for t in PUBLIC_TRACKERS if t not in magnet_link]
         if trackers_to_add:
-            tracker_params = '&tr='.join([''] + trackers_to_add)
+            tracker_params = '&tr='.join([''] + [quote(t, safe='/:?=&') for t in trackers_to_add])
             return magnet_link + tracker_params
         return magnet_link
     
@@ -327,8 +341,15 @@ class TorrentDownloader:
                 'files': file_list
             }
             
+        except (lt.LibtorrentError, RuntimeError) as e:
+            self.log(f'❌ Torrent error: {str(e)}', 'error')
+            return None
+        except OSError as e:
+            self.log(f'❌ File system error: {str(e)}', 'error')
+            return None
         except Exception as e:
-            self.log(f'❌ Error: {str(e)}', 'error')
+            logger.exception(f"Unexpected error in analyze_torrent: {e}")
+            self.log(f'❌ Unexpected error: {str(e)}', 'error')
             return None
         finally:
             self._cleanup_handle()
@@ -466,21 +487,42 @@ class TorrentDownloader:
                 name = status.name or 'download'
                 zip_base = zip_name or name.replace(' ', '_')
                 target = os.path.join(save_path, name)
+                zip_output = os.path.join(save_path, f'{zip_base}.zip')
                 
                 try:
                     if os.path.isdir(target):
                         shutil.make_archive(os.path.join(save_path, zip_base), 'zip', target)
+                    elif os.path.isfile(target):
+                        with zipfile.ZipFile(zip_output, 'w', zipfile.ZIP_DEFLATED) as zf:
+                            zf.write(target, os.path.basename(target))
                     else:
-                        shutil.make_archive(os.path.join(save_path, zip_base), 'zip', save_path)
+                        for root, dirs, files in os.walk(save_path):
+                            for file in files:
+                                if not file.endswith('.zip') and not file.startswith('.'):
+                                    file_path = os.path.join(root, file)
+                                    arcname = os.path.relpath(file_path, save_path)
+                                    with zipfile.ZipFile(zip_output, 'a', zipfile.ZIP_DEFLATED) as zf:
+                                        zf.write(file_path, arcname)
                     
                     self.log(f'✅ Zip: {zip_base}.zip', 'success')
+                except OSError as e:
+                    self.log(f'⚠️ Zip I/O error: {e}', 'warning')
+                except zipfile.BadZipFile as e:
+                    self.log(f'⚠️ Zip creation failed: {e}', 'warning')
                 except Exception as e:
                     self.log(f'⚠️ Zip error: {e}', 'warning')
             
             return True
             
+        except (lt.LibtorrentError, RuntimeError) as e:
+            self.log(f'❌ Torrent error: {str(e)}', 'error')
+            return False
+        except OSError as e:
+            self.log(f'❌ File system error: {str(e)}', 'error')
+            return False
         except Exception as e:
-            self.log(f'❌ Error: {str(e)}', 'error')
+            logger.exception(f"Unexpected error in download: {e}")
+            self.log(f'❌ Unexpected error: {str(e)}', 'error')
             return False
         finally:
             self._cleanup_handle()
@@ -562,7 +604,11 @@ class DriveUploader:
             self.service = build('drive', 'v3', credentials=creds, cache_discovery=False)
             self.log('✅ Authenticated', 'success')
             return True
+        except ImportError as e:
+            self.log(f'❌ Colab auth not available: {e}', 'error')
+            return False
         except Exception as e:
+            logger.exception(f"Authentication error: {e}")
             self.log(f'❌ Auth failed: {e}', 'error')
             return False
     
@@ -573,8 +619,8 @@ class DriveUploader:
                     return False
             
             from googleapiclient.http import MediaFileUpload
+            from googleapiclient.errors import HttpError
             
-            # Get/create folder
             self.log(f'📁 Folder: {folder_name}', 'info')
             query = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and trashed=false"
             results = self.service.files().list(q=query, fields='files(id)', pageSize=1).execute()
@@ -587,7 +633,6 @@ class DriveUploader:
                 folder = self.service.files().create(body=folder_meta, fields='id').execute()
                 folder_id = folder['id']
             
-            # Upload
             file_name = os.path.basename(file_path)
             file_size = os.path.getsize(file_path)
             self.log(f'⬆️ {file_name} ({file_size/(1024**3):.2f} GB)', 'info')
@@ -602,7 +647,7 @@ class DriveUploader:
                 status, response = request.next_chunk()
                 if status:
                     progress = int(status.progress() * 100)
-                    if progress - last_progress >= 5:  # Update every 5%
+                    if progress - last_progress >= 5:
                         if self.progress_callback:
                             self.progress_callback(progress)
                         else:
@@ -613,7 +658,14 @@ class DriveUploader:
             self.log(f'🔗 {response.get("webViewLink", "N/A")}', 'success')
             return True
             
+        except HttpError as e:
+            self.log(f'❌ Google Drive API error: {e}', 'error')
+            return False
+        except OSError as e:
+            self.log(f'❌ File access error: {e}', 'error')
+            return False
         except Exception as e:
+            logger.exception(f"Upload error: {e}")
             self.log(f'❌ Upload failed: {e}', 'error')
             return False
 
