@@ -1,52 +1,39 @@
-# Torrent to GDrive
+# Torrent to Google Drive (Direct & Resumable)
 
-Download torrents and upload them to Google Drive using libtorrent and Google Drive API.
-
-## Choose Your Version
-
-### GUI Notebook: `torrent_notebook_v3_gui.ipynb` (Recommended)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/DinithaSasinduDissanayake/torrent-to-gdrive-ipynb/blob/main/torrent_notebook_v3_gui.ipynb)
-
-**Easy single-cell GUI interface** - just paste and click!
-- One cell to run - everything auto-installs
-- Interactive widgets with progress bars
-- 4-step workflow: Paste magnet → Analyze → Download → Upload
-- Perfect for quick downloads
-
-### Standalone Script: `torrent_to_gdrive_standalone.py`
-
-**Run with `!python torrent_to_gdrive_standalone.py` in Colab**
-- Upload the .py file to Colab
-- Same GUI functionality as the notebook
-- Easier to version control and edit
-
-## Quick Start
-
-1. Open `torrent_notebook_v3_gui.ipynb` in Google Colab **OR** upload `torrent_to_gdrive_standalone.py` and run with `!python torrent_to_gdrive_standalone.py`
-2. Run the cell (everything installs automatically)
-3. Paste your magnet link in the text box
-4. Click "Analyze Torrent" and review the file list
-5. Select the files you want (or use Select All/Deselect All)
-6. Click "Start Download"
-7. Click "Upload to Drive" when complete
-
-That's it! The interface handles authentication, analysis, selection, progress tracking, and upload.
+A robust, command-driven Google Colab notebook to download torrents **directly** to Google Drive using `rclone` and `libtorrent`.
 
 ## Features
 
-- **File Selection**: Analyze torrents before downloading and choose specific files
-- **Auto-Zip**: Optionally create zip archives after download
-- **Public Trackers**: Auto-add trackers for better peer discovery
-- **Progress Tracking**: Real-time download/upload progress with speed and ETA
-- **Google Drive Integration**: Direct upload to Google Drive with folder organization
+*   **Direct Download**: Writes directly to Google Drive (via Rclone cache), saving local disk space.
+*   **Resumable**: Automatically saves `.fastresume` checkpoints. If you stop and restart, it resumes instantly without re-checking.
+*   **Graceful Stop**: Handles the Colab "Stop" button safely by saving progress before exiting.
+*   **Fast**: Uses `libtorrent` with sequential download mode for optimal cloud performance.
 
-## Important Notes
-- Only download content you have legal rights to access
-- Respect Google Colab and Google Drive terms of service
-- Drive upload limit: ~750 GB per day
-- Colab free tier: ~12h max with 90m idle timeout
-- Large files may take time depending on seeders
+## Usage
 
-## Archive
+1.  **Upload**: Upload `Torrent_Downloader.ipynb` to [Google Colab](https://colab.research.google.com/).
+2.  **Setup**: Run Cell 1 to install dependencies.
+3.  **Mount Drive (First Time Only)**: Run Cell 2.
+    *   It will launch the `rclone config` tool.
+    *   Type `n` (New remote).
+    *   Name it `gdrive`.
+    *   Select `drive` (Google Drive).
+    *   Follow the prompts (leave client_id/secret blank).
+    *   When asked for "Use web browser", type `n`.
+    *   Click the link, login, copy the code, and paste it.
+    *   Quit with `q`.
+4.  **Download**: Run Cell 3.
+    *   Paste your Magnet Link.
+    *   Watch it fly!
 
-Legacy notebooks (v1, v2) and additional documentation are in the `archive/` directory.
+## Resuming
+
+To resume a download:
+1.  Open a new Colab session.
+2.  Run Cell 1 & 2 (Rclone config is saved if you didn't factory reset the runtime, otherwise re-auth).
+3.  Run Cell 3 and paste the **same magnet link**.
+4.  It will detect the `.fastresume` file and resume instantly.
+
+## Disclaimer
+
+This tool is for educational purposes only. Please respect copyright laws.

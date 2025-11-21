@@ -1,0 +1,38 @@
+sequenceDiagram
+    autonumber
+    actor User
+    participant Colab as Colab Notebook
+    participant Rclone as Rclone Daemon
+    participant Drive as Google Drive
+    participant Network as Torrent Network
+
+    User->>Colab: Run Setup
+    Colab->>Colab: Install Tools
+    
+    User->>Colab: Run Mount
+    Colab->>User: Prompt for Rclone Config
+    User->>Colab: Paste Config/Auth Code
+    Colab->>Rclone: Start Daemon (VFS Mode)
+    Rclone->>Drive: Mount /content/drive_rclone
+    
+    User->>Colab: Run Download
+    Colab->>User: Prompt Magnet
+    User->>Colab: Paste Magnet
+    
+    Colab->>Drive: Check for .fastresume
+    alt Resume Data Found
+        Drive-->>Colab: Return Data
+        Colab->>Network: Start (No Re-check)
+    else New Download
+        Colab->>Network: Start Normal
+    end
+    
+    loop Downloading
+        Colab->>Rclone: Write Data
+        Rclone->>Drive: Upload (Background)
+        Colab->>Drive: Save .fastresume (Every 60s)
+    end
+    
+    User->>Colab: Click Stop
+    Colab->>Drive: Save Final .fastresume
+    Colab->>User: "Saved. Safe to close."

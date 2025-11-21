@@ -1,0 +1,32 @@
+flowchart TD
+    Start([Start]) --> Install[Install libtorrent & rclone]
+    Install --> Config[Configure Rclone Auth]
+    Config --> Mount[Mount Drive with VFS Cache]
+    Mount --> InputMagnet[/Input Magnet Link/]
+    InputMagnet --> CheckResume{Resume Data Exists?}
+    
+    CheckResume -- Yes --> LoadResume[Load .fastresume]
+    CheckResume -- No --> NewSession[Start New Session]
+    
+    LoadResume --> InitSession
+    NewSession --> InitSession[Init Session & Add Torrent]
+    
+    InitSession --> LoopStart
+    
+    subgraph Download Loop
+    LoopStart --> GetStatus[Get Status]
+    GetStatus --> Checkpoint{Every 60s?}
+    Checkpoint -- Yes --> SaveResume[Save .fastresume to Drive]
+    Checkpoint -- No --> PrintProg[Print Progress]
+    SaveResume --> PrintProg
+    PrintProg --> CheckDone{Done?}
+    CheckDone -- No --> SleepLoop[Sleep 1s] --> LoopStart
+    end
+    
+    CheckDone -- Yes --> Cleanup[Delete .fastresume]
+    Cleanup --> End([Done])
+    
+    subgraph Interrupt Handler
+    StopButton[User Clicks Stop] --> SaveFinal[Save .fastresume]
+    SaveFinal --> Exit([Exit])
+    end

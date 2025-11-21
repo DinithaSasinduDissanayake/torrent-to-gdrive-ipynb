@@ -1,0 +1,28 @@
+graph LR
+    subgraph Internet
+        Swarm(BitTorrent Swarm)
+    end
+    
+    subgraph Google_Colab [Google Colab Runtime]
+        direction TB
+        Script(Python Script)
+        LibT(Libtorrent Engine)
+        Rclone(Rclone VFS Cache)
+        LocalDisk(Local Disk Cache)
+    end
+    
+    subgraph Cloud_Storage [Google Cloud]
+        GDrive[(Google Drive)]
+        Folder("/content/drive_rclone/Torrent")
+    end
+
+    Script -- 1. Configures --> LibT
+    Swarm -- 2. P2P Data Stream --> LibT
+    LibT -- 3. Sequential Writes --> Rclone
+    Rclone -- 4. Cache Writes --> LocalDisk
+    Rclone -- 5. Background Upload --> Folder
+    Folder -.-> GDrive
+    
+    style Google_Colab fill:#f9f,stroke:#333,stroke-width:2px
+    style Cloud_Storage fill:#ccf,stroke:#333,stroke-width:2px
+    style Rclone fill:#ff9,stroke:#333,stroke-width:2px
